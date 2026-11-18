@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gabor Dictionary Visualizer</title>
+<style>
+:root{
+  --hatch-widget-bg:#ffffff;
+  --hatch-widget-surface:#ffffff;
+  --hatch-widget-surface-muted:#f3f4f6;
+  --hatch-widget-text:#111827;
+  --hatch-widget-muted:#6b7280;
+  --hatch-widget-border:#d1d5db;
+  --hatch-widget-accent:#2563eb;
+  --hatch-widget-on-accent:#ffffff;
+  --hatch-widget-focus:#2563eb;
+  --hatch-widget-shadow:rgba(0,0,0,0.1);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --hatch-widget-bg:#111827;
+    --hatch-widget-surface:#1f2937;
+    --hatch-widget-surface-muted:#111827;
+    --hatch-widget-text:#f9fafb;
+    --hatch-widget-muted:#9ca3af;
+    --hatch-widget-border:#374151;
+    --hatch-widget-accent:#3b82f6;
+    --hatch-widget-on-accent:#ffffff;
+    --hatch-widget-focus:#3b82f6;
+    --hatch-widget-shadow:rgba(0,0,0,0.4);
+  }
+}
+body{margin:0;padding:16px;background:var(--hatch-widget-bg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}
+</style>
+</head>
+<body>
+<div style="box-sizing:border-box;font-family:inherit;color:var(--hatch-widget-text);max-width:560px;margin:0 auto;">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">
+    <strong>Gabor Dictionary Visualizer</strong>
+    <span style="color:var(--hatch-widget-muted);font-size:12px;">2D Gabor atoms &middot; filter bank</span>
+  </div>
+  <canvas id="gaborMain" style="width:100%;aspect-ratio:1/1;display:block;border:1px solid var(--hatch-widget-border);border-radius:10px;background:#f7f7f7;margin-top:8px;"></canvas>
+  <canvas id="gaborProfile" style="width:100%;height:90px;display:block;border:1px solid var(--hatch-widget-border);border-radius:10px;background:#f7f7f7;margin-top:6px;"></canvas>
+  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+    <button id="btnReal" class="gbtn active">Real (cos)</button>
+    <button id="btnImag" class="gbtn">Imaginary (sin)</button>
+    <button id="btnMag" class="gbtn">Envelope</button>
+  </div>
+  <div style="margin-top:10px;font-size:13px;display:grid;gap:6px;">
+    <label>Wavelength &lambda; <input id="rngLambda" type="range" min="4" max="32" step="0.5" value="10" style="vertical-align:middle;width:130px;"> <span id="lblLambda"></span></label>
+    <label>Orientation &theta; <input id="rngTheta" type="range" min="0" max="180" step="1" value="45" style="vertical-align:middle;width:130px;"> <span id="lblTheta"></span></label>
+    <label>Phase &psi; <input id="rngPsi" type="range" min="-180" max="180" step="1" value="0" style="vertical-align:middle;width:130px;"> <span id="lblPsi"></span></label>
+    <label>Sigma &sigma; <input id="rngSigma" type="range" min="1.5" max="14" step="0.1" value="5.6" style="vertical-align:middle;width:130px;"> <span id="lblSigma"></span></label>
+    <label>Aspect ratio &gamma; <input id="rngGamma" type="range" min="0.2" max="1" step="0.05" value="0.5" style="vertical-align:middle;width:130px;"> <span id="lblGamma"></span></label>
+    <label>Kernel size <input id="rngSize" type="range" min="15" max="61" step="2" value="41" style="vertical-align:middle;width:130px;"> <span id="lblSize"></span></label>
+  </div>
+  <div id="stats" style="margin-top:8px;font-size:13px;color:var(--hatch-widget-muted);"></div>
+  <div style="margin-top:6px;font-size:12px;color:var(--hatch-widget-muted);line-height:1.5;">
+    g(x,y) = exp(&minus;(x&prime;&sup2; + &gamma;&sup2;y&prime;&sup2;) / 2&sigma;&sup2;) &middot; cos(2&pi;x&prime;/&lambda; + &psi;), with (x&prime;, y&prime;) rotated by &theta;. &sigma; &asymp; 0.56&lambda; gives ~1 octave bandwidth.
+  </div>
+  <div style="margin-top:10px;font-size:13px;"><strong>Dictionary</strong> <span style="color:var(--hatch-widget-muted);">&mdash; click an atom to load it</span></div>
+  <canvas id="gaborGrid" style="width:100%;display:block;border:1px solid var(--hatch-widget-border);border-radius:10px;background:#f7f7f7;margin-top:6px;cursor:pointer;"></canvas>
+  <div style="margin-top:6px;font-size:12px;color:var(--hatch-widget-muted);line-height:1.5;">
+    Rows: &lambda; = 6, 10, 16, 24 px (&sigma; = 0.56&lambda;) &middot; Columns: &theta; = 0&deg;&ndash;157.5&deg; in 22.5&deg; steps. Red = positive, blue = negative.
+  </div>
+</div>
+<style>
+  .gbtn{background:var(--hatch-widget-surface);color:var(--hatch-widget-text);border:1px solid var(--hatch-widget-border);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13px;}
+  .gbtn.active{background:var(--hatch-widget-accent);color:var(--hatch-widget-on-accent);border-color:var(--hatch-widget-accent);}
+</style>
+<script>
+(function(){
+  var main=document.getElementById('gaborMain');
+  var mctx=main.getContext('2d');
+  var prof=document.getElementById('gaborProfile');
+  var pctx=prof.getContext('2d');
+  var grid=document.getElementById('gaborGrid');
+  var gctx=grid.getContext('2d');
+  var LAMBDAS=[6,10,16,24], THETAS=[0,22.5,45,67.5,90,112.5,135,157.5];
+  var state={lambda:10,theta:45,psi:0,sigma:5.6,gamma:0.5,size:41,part:'real'};
+  var sel={row:1,col:2};
+  var MW=300,MH=300,PW=300,PH=90,GW=300,GH=120,CELL=30;
+
+  function gabor(x,y,st){
+    var th=st.theta*Math.PI/180, ct=Math.cos(th), snt=Math.sin(th);
+    var xp=x*ct+y*snt, yp=-x*snt+y*ct;
+    var env=Math.exp(-(xp*xp+st.gamma*st.gamma*yp*yp)/(2*st.sigma*st.sigma));
+    if(st.part==='mag')return env;
+    var ph=2*Math.PI*xp/st.lambda+st.psi*Math.PI/180;
+    return env*(st.part==='imag'?Math.sin(ph):Math.cos(ph));
+  }
+  function colorize(t){
+    var r,g,b;
+    if(t>=0){r=247+(215-247)*t;g=247+(48-247)*t;b=247+(39-247)*t;}
+    else{var u=-t;r=247+(33-247)*u;g=247+(102-247)*u;b=247+(172-247)*u;}
+    return [r|0,g|0,b|0];
+  }
+  function kernelCanvas(res,half,st){
+    var vals=new Float32Array(res*res),mx=0;
+    for(var j=0;j<res;j++){
+      var y=(j+0.5)/res*2*half-half;
+      for(var i=0;i<res;i++){
+        var x=(i+0.5)/res*2*half-half;
+        var v=gabor(x,y,st);vals[j*res+i]=v;
+        if(Math.abs(v)>mx)mx=Math.abs(v);
+      }
+    }
+    if(mx<1e-9)mx=1;
+    var off=document.createElement('canvas');off.width=res;off.height=res;
+    var octx=off.getContext('2d');
+    var img=octx.createImageData(res,res);
+    for(var k=0;k<res*res;k++){
+      var cc=colorize(vals[k]/mx);
+      img.data[k*4]=cc[0];img.data[k*4+1]=cc[1];img.data[k*4+2]=cc[2];img.data[k*4+3]=255;
+    }
+    octx.putImageData(img,0,0);
+    return off;
+  }
+  function renderMain(){
+    var off=kernelCanvas(220,state.size/2,state);
+    mctx.imageSmoothingEnabled=true;
+    mctx.clearRect(0,0,MW,MH);
+    mctx.drawImage(off,0,0,MW,MH);
+  }
+  function renderProfile(){
+    var W=PW,H=PH,half=state.size/2,pad=8;
+    pctx.clearRect(0,0,W,H);
+    var midY=H/2, amp=H/2-pad;
+    var psiRad=state.psi*Math.PI/180;
+    pctx.strokeStyle='rgba(128,128,128,0.6)';pctx.lineWidth=1;
+    pctx.beginPath();pctx.moveTo(0,midY);pctx.lineTo(W,midY);pctx.stroke();
+    pctx.strokeStyle='rgba(128,128,128,0.8)';pctx.setLineDash([4,4]);
+    var i,x,env,px;
+    pctx.beginPath();
+    for(i=0;i<=200;i++){
+      x=-half+2*half*i/200;
+      env=Math.exp(-(x*x)/(2*state.sigma*state.sigma));
+      px=i/200*W;
+      if(i===0)pctx.moveTo(px,midY-env*amp);else pctx.lineTo(px,midY-env*amp);
+    }
+    pctx.stroke();
+    pctx.beginPath();
+    for(i=0;i<=200;i++){
+      x=-half+2*half*i/200;
+      env=Math.exp(-(x*x)/(2*state.sigma*state.sigma));
+      px=i/200*W;
+      if(i===0)pctx.moveTo(px,midY+env*amp);else pctx.lineTo(px,midY+env*amp);
+    }
+    pctx.stroke();
+    pctx.setLineDash([]);
+    pctx.strokeStyle='#2563eb';pctx.lineWidth=2;pctx.beginPath();
+    for(i=0;i<=300;i++){
+      x=-half+2*half*i/300;
+      env=Math.exp(-(x*x)/(2*state.sigma*state.sigma));
+      var ph=2*Math.PI*x/state.lambda+psiRad;
+      var v=state.part==='mag'?env:env*(state.part==='imag'?Math.sin(ph):Math.cos(ph));
+      px=i/300*W;
+      if(i===0)pctx.moveTo(px,midY-v*amp);else pctx.lineTo(px,midY-v*amp);
+    }
+    pctx.stroke();
+  }
+  function renderGrid(){
+    var gutter=34, cell=CELL;
+    gctx.clearRect(0,0,GW,GH);
+    for(var r=0;r<4;r++){
+      gctx.fillStyle='#6b7280';gctx.font='11px sans-serif';
+      gctx.fillText('\u03bb='+LAMBDAS[r],4,r*cell+cell/2+4);
+      for(var c=0;c<8;c++){
+        var st={lambda:LAMBDAS[r],theta:THETAS[c],psi:state.psi,sigma:0.56*LAMBDAS[r],gamma:state.gamma,part:state.part};
+        var off=kernelCanvas(28,15.5,st);
+        gctx.imageSmoothingEnabled=true;
+        gctx.drawImage(off,gutter+c*cell,r*cell,cell,cell);
+        if(sel.row===r&&sel.col===c){
+          gctx.strokeStyle='#2563eb';gctx.lineWidth=2;
+          gctx.strokeRect(gutter+c*cell+1,r*cell+1,cell-2,cell-2);
+        }
+      }
+    }
+  }
+  function labels(){
+    document.getElementById('lblLambda').textContent=state.lambda.toFixed(1)+' px';
+    document.getElementById('lblTheta').textContent=state.theta.toFixed(0)+'\u00b0';
+    document.getElementById('lblPsi').textContent=state.psi.toFixed(0)+'\u00b0';
+    document.getElementById('lblSigma').textContent=state.sigma.toFixed(1)+' px';
+    document.getElementById('lblGamma').textContent=state.gamma.toFixed(2);
+    document.getElementById('lblSize').textContent=state.size+' \u00d7 '+state.size;
+    document.getElementById('stats').textContent='\u03bb = '+state.lambda.toFixed(1)+' px \u00b7 f = '+(1/state.lambda).toFixed(3)+' cyc/px \u00b7 \u03b8 = '+state.theta.toFixed(1)+'\u00b0 \u00b7 \u03c8 = '+state.psi.toFixed(0)+'\u00b0 \u00b7 \u03c3 = '+state.sigma.toFixed(1)+' px \u00b7 \u03b3 = '+state.gamma.toFixed(2)+' \u00b7 kernel '+state.size+' \u00d7 '+state.size;
+  }
+  function syncSliders(){
+    document.getElementById('rngLambda').value=state.lambda;
+    document.getElementById('rngTheta').value=state.theta;
+    document.getElementById('rngPsi').value=state.psi;
+    document.getElementById('rngSigma').value=state.sigma;
+    document.getElementById('rngGamma').value=state.gamma;
+    document.getElementById('rngSize').value=state.size;
+    labels();
+  }
+  function renderAll(){renderMain();renderProfile();renderGrid();labels();}
+  function bindSlider(id,key){
+    document.getElementById(id).oninput=function(){
+      state[key]=+document.getElementById(id).value;
+      sel={row:-1,col:-1};
+      renderAll();
+    };
+  }
+  bindSlider('rngLambda','lambda');
+  bindSlider('rngTheta','theta');
+  bindSlider('rngPsi','psi');
+  bindSlider('rngSigma','sigma');
+  bindSlider('rngGamma','gamma');
+  bindSlider('rngSize','size');
+  function setPart(p){
+    state.part=p;
+    document.getElementById('btnReal').classList.remove('active');
+    document.getElementById('btnImag').classList.remove('active');
+    document.getElementById('btnMag').classList.remove('active');
+    document.getElementById(p==='real'?'btnReal':(p==='imag'?'btnImag':'btnMag')).classList.add('active');
+    renderAll();
+  }
+  document.getElementById('btnReal').onclick=function(){setPart('real');};
+  document.getElementById('btnImag').onclick=function(){setPart('imag');};
+  document.getElementById('btnMag').onclick=function(){setPart('mag');};
+  grid.onclick=function(e){
+    var r=grid.getBoundingClientRect();
+    var x=e.clientX-r.left, y=e.clientY-r.top;
+    var gutter=34, cell=CELL;
+    var c=Math.floor((x-gutter)/cell), rr=Math.floor(y/cell);
+    if(c<0||c>7||rr<0||rr>3)return;
+    sel={row:rr,col:c};
+    state.lambda=LAMBDAS[rr];
+    state.theta=THETAS[c];
+    state.sigma=Math.round(0.56*LAMBDAS[rr]*10)/10;
+    syncSliders();renderAll();
+  };
+  function setup(cv,w,h){
+    var dpr=window.devicePixelRatio||1;
+    cv.width=Math.max(1,Math.round(w*dpr));
+    cv.height=Math.max(1,Math.round(h*dpr));
+    cv.getContext('2d').setTransform(dpr,0,0,dpr,0,0);
+  }
+  function fit(){
+    var r=main.getBoundingClientRect();MW=r.width;MH=r.height;setup(main,MW,MH);
+    var rp=prof.getBoundingClientRect();PW=rp.width;PH=rp.height;setup(prof,PW,PH);
+    var rg=grid.getBoundingClientRect();
+    CELL=Math.max(20,Math.floor((rg.width-34)/8));
+    grid.style.height=(CELL*4)+'px';
+    var rg2=grid.getBoundingClientRect();GW=rg2.width;GH=rg2.height;setup(grid,GW,GH);
+    renderAll();
+  }
+  window.addEventListener('resize',fit);
+  syncSliders();fit();
+})();
+</script>
+
+</body>
+</html>
